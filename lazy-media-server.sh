@@ -89,6 +89,8 @@ EOF
 }
 
 function install_docker(){
+	echo "-- Starting docker installation."
+
 	REQUIRED_PKG="docker-ce"
 	PKG_OK=$(dpkg-query -W --showformat='${Status}\n' $REQUIRED_PKG|grep "install ok installed")
 	echo Checking for $REQUIRED_PKG: $PKG_OK
@@ -157,21 +159,26 @@ fi
 echo "------------------------------------------------------"
 
 # Check if user wants to create the ufw rules
-echo "Do you want to create the UFW rules for all services? (Y/N)"
-read_line create_ufw_bool 
-if [[ "$create_ufw_bool" == "Y" ]]; then
-	sudo ufw allow 7878/tcp comment "Radarr"
-	sudo ufw allow 8989/tcp comment "Sonarr"
-	sudo ufw allow 32400/tcp comment "Plex web"
-	sudo ufw allow 9091/tcp comment "Transmission"
-	sudo ufw allow 51413 comment "Transmission" 
-	sudo ufw allow 9117/tcp comment "Jackett"
+function create_ufw_rules(){
+	echo "Do you want to create the UFW rules for all services? (Y/N)"
+	read_line create_ufw_bool 
+	if [[ "$create_ufw_bool" == "Y" ]]; then
+		sudo ufw allow 7878/tcp comment "Radarr"
+		sudo ufw allow 8989/tcp comment "Sonarr"
+		sudo ufw allow 32400/tcp comment "Plex web"
+		sudo ufw allow 9091/tcp comment "Transmission"
+		sudo ufw allow 51413 comment "Transmission" 
+		sudo ufw allow 9117/tcp comment "Jackett"
 
-	echo "-- All firewall rules created."
-	sudo ufw status
-else
-	echo "-- No firewall rules created, please complete that once the containers are live."
-fi
+		echo "-- All firewall rules created."
+		sudo ufw status
+	else
+		echo "-- No firewall rules created, please complete that once the containers are live."
+	fi
+
+}
+
+create_ufw_rules()
 
 # Start docker install here
 echo "-- Creating docker config directories."
@@ -186,97 +193,103 @@ echo "-- /docker/appdata/config/{all service directories} created."
 echo "-- permissions setup on /docker."
 echo ""
 
-
-echo "Creating docker-compose.yaml..."
-# Create the docker compose file 
-cat > docker-compose.yaml << EOF
-version: "3.2"
-services:
-  radarr:
-    container_name: radarr
-    hostname: radarr.internal
-    image: ghcr.io/hotio/radarr:latest
-    restart: unless-stopped
-    logging:
-      driver: json-file
-    ports:
-      - 7878:7878
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Halifax
-    volumes:
-      - /docker/appdata/config/radarr:/config
-      - $root_media_path:/data
-  sonarr:
-    container_name: sonarr
-    hostname: sonarr.internal
-    image: ghcr.io/hotio/sonarr:latest
-    restart: unless-stopped
-    logging:
-      driver: json-file
-    ports:
-      - 8989:8989
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Halifax
-    volumes:
-      - /docker/appdata/config/sonarr:/config
-      - $root_media_path:/data
-  plex:
-    image: lscr.io/linuxserver/plex:latest
-    container_name: plex
-    network_mode: host
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Halifax
-      - VERSION=docker
-      - PLEX_CLAIM= #optional
-    volumes:
-      - /docker/appdata/config/plex:/config
-      - $abs_tv_path:/tv
-      - $abs_movie_path:/movies
-    restart: unless-stopped
-  transmission:
-    image: lscr.io/linuxserver/transmission:latest
-    container_name: transmission
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Halifax
-      - TRANSMISSION_WEB_HOME= #optional
-      - USER= #optional
-      - PASS= #optional
-      - WHITELIST= #optional
-      - PEERPORT= #optional
-      - HOST_WHITELIST= #optional
-    volumes:
-      - /docker/appdata/config/transmission:/config
-      - $abs_download_complete_path:/downloads/complete #optional
-      - $abs_download_incomplete_path:/downloads/incomplete#optional
-    ports:
-      - 9091:9091
-      - 51413:51413
-      - 51413:51413/udp
-    restart: unless-stopped
-  jackett:
-    image: lscr.io/linuxserver/jackett:latest
-    container_name: jackett
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Halifax
-      - AUTO_UPDATE=true #optional
-      - RUN_OPTS= #optional
-    volumes:
-      - /docker/appdata/config/jackett:/config
-      - $abs_downloads:/downloads
-    ports:
-      - 9117:9117
-    restart: unless-stopped
+function create_docker_compose() {
+	echo "Creating docker-compose.yaml..."
+	cat > docker-compose.yaml << EOF
+	version: "3.2"
+	services:
+	  radarr:
+	    container_name: radarr
+	    hostname: radarr.internal
+	    image: ghcr.io/hotio/radarr:latest
+	    restart: unless-stopped
+	    logging:
+	      driver: json-file
+	    ports:
+	      - 7878:7878
+	    environment:
+	      - PUID=1000
+	      - PGID=1000
+	      - TZ=America/Halifax
+	    volumes:
+	      - /docker/appdata/config/radarr:/config
+	      - $root_media_path:/data
+	  sonarr:
+	    container_name: sonarr
+	    hostname: sonarr.internal
+	    image: ghcr.io/hotio/sonarr:latest
+	    restart: unless-stopped
+	    logging:
+	      driver: json-file
+	    ports:
+	      - 8989:8989
+	    environment:
+	      - PUID=1000
+	      - PGID=1000
+	      - TZ=America/Halifax
+	    volumes:
+	      - /docker/appdata/config/sonarr:/config
+	      - $root_media_path:/data
+	  plex:
+	    image: lscr.io/linuxserver/plex:latest
+	    container_name: plex
+	    network_mode: host
+	    environment:
+	      - PUID=1000
+	      - PGID=1000
+	      - TZ=America/Halifax
+	      - VERSION=docker
+	      - PLEX_CLAIM= #optional
+	    volumes:
+	      - /docker/appdata/config/plex:/config
+	      - $abs_tv_path:/tv
+	      - $abs_movie_path:/movies
+	    restart: unless-stopped
+	  transmission:
+	    image: lscr.io/linuxserver/transmission:latest
+	    container_name: transmission
+	    environment:
+	      - PUID=1000
+	      - PGID=1000
+	      - TZ=America/Halifax
+	      - TRANSMISSION_WEB_HOME= #optional
+	      - USER= #optional
+	      - PASS= #optional
+	      - WHITELIST= #optional
+	      - PEERPORT= #optional
+	      - HOST_WHITELIST= #optional
+	    volumes:
+	      - /docker/appdata/config/transmission:/config
+	      - $abs_download_complete_path:/downloads/complete #optional
+	      - $abs_download_incomplete_path:/downloads/incomplete#optional
+	    ports:
+	      - 9091:9091
+	      - 51413:51413
+	      - 51413:51413/udp
+	    restart: unless-stopped
+	  jackett:
+	    image: lscr.io/linuxserver/jackett:latest
+	    container_name: jackett
+	    environment:
+	      - PUID=1000
+	      - PGID=1000
+	      - TZ=America/Halifax
+	      - AUTO_UPDATE=true #optional
+	      - RUN_OPTS= #optional
+	    volumes:
+	      - /docker/appdata/config/jackett:/config
+	      - $abs_downloads:/downloads
+	    ports:
+	      - 9117:9117
+	    restart: unless-stopped
 EOF
+}
+
+function start_containers(){
+	echo "-- Building containers..."
+	sudo docker compose -f docker-compose.yaml up -d
+	sudo docker ps -a 
+}
 
 echo ""
 echo "docker-compose.yaml created!"
@@ -284,14 +297,12 @@ echo "Starting docker installation."
 
 setup_docker_apt_repo
 install_docker
+create_docker_compose
+
+
 
 echo ""
-echo "Docker installation success."
-echo "-- Building containers..."
-
-sudo docker compose -f docker-compose.yaml up -d
-sudo docker ps -a 
-
+start_containers
 echo ""
 echo "Process completed."
 echo ""
