@@ -136,7 +136,7 @@ EOF
 function add_bazarr(){
 	sudo mkdir -p /docker/appdata/config/bazarr
 	cat >> docker-compose.yaml << EOF
-   bazarr:
+  bazarr:
     image: lscr.io/linuxserver/bazarr:latest
     container_name: bazarr
     environment:
