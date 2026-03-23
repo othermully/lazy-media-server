@@ -442,7 +442,7 @@ function setup_permissions(){
 	echo "-- Completed permission setup."
 }
 
-function install_doocker(){
+function install_docker(){
 	if [[ $distro == 'Arch' ]]; then
 		# Arch package handles GPG keys and sources list
 		$package_install_name 'docker'
@@ -511,6 +511,7 @@ function main(){
 		read_line input
 		if [[ $input == 'Y' ]]; then
 			$package_install_command 'ufw'
+			sudo ufw enable
 			echo "-- UFW Installed."
 		fi
 	else
