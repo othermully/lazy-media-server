@@ -517,6 +517,7 @@ function main(){
 		echo "-- Docker installed, skipping installation."
 	fi
 
+	# Creating directory structure
 	echo ""
 	echo "Do you want this script to automatically create the folder structure? (Y/N)"
 	read_line input
@@ -530,6 +531,7 @@ function main(){
 	echo "-- Setting up folder permissions..."
 	setup_permissions
 
+	# Setting up docker-compose file and building containers
 	cat >> docker-compose.yaml <<EOF
 ---
 services:
@@ -542,6 +544,7 @@ EOF
 		echo ""
 	else
 		build_containers
+		echo "-- Docker images have been pulled, and built."
 	fi
 
 	# List web interfaces
