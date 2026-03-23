@@ -311,6 +311,7 @@ EOF
 }
 
 function add_seer(){
+	sudo mkdir -p /docker/appdata/config/seer
 	cat >> docker-compose.yaml << EOF
   seerr:
     image: ghcr.io/seerr-team/seerr:latest
@@ -322,7 +323,7 @@ function add_seer(){
     ports:
       - 5055:5055
     volumes:
-      - seerr-data:/app/config
+      - /docker/appdata/config/seer:/config
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://localhost:5055/api/v1/status || exit 1
       start_period: 20s
