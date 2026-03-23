@@ -6,5 +6,5 @@
                                                                            
 Automated docker media server setup
 --> Author: othermully
---> Version: 0.0.1
---> I don't even know if this is going to work
+--> Version: 0.2.0
+--> This will automatically create and run docker containers 
