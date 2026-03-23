@@ -1,5 +1,6 @@
 #!/bin/bash
 
+set -euo pipefail
 clear
 cat motd
 
@@ -16,6 +17,7 @@ package_install_command=""
 
 ufw_installed=""
 docker_installed=""
+> docker-compose.yaml
 
 declare -A selected_services=()
 
@@ -74,7 +76,7 @@ function select_network_interface(){
 
 	network_interface=${input}
 	ip_addr=$(ip addr show "$network_interface" | awk '/inet / {print $2}')
-	ip_addr_trimmed=${ip_addr%/24}
+	ip_addr_trimmed=${ip_addr%%/*}
 }
 
 function get_package_manager(){
@@ -471,6 +473,8 @@ function install_docker(){
 	if [[ $distro == "Arch" ]]; then
 		$package_install_command docker
 	fi
+
+	$docker_installed="true"
 }
 
 function build_containers(){
