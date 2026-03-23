@@ -334,6 +334,23 @@ function add_seer(){
 EOF
 }
 
+function add_flaresolver(){
+    sudo mkdir -p /docker/appdata/config/flaresolver
+    cat >> docker-compose.yaml << EOF
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_HTML=${LOG_HTML:-false}
+      - CAPTCHA_SOLVER=${CAPTCHA_SOLVER:-none}
+      - TZ=America/Halifax
+    ports:
+      - "${PORT:-8191}:8191"
+    restart: unless-stopped 
+EOF
+}
+
 function select_docker_containers(){
 	echo ""
 	echo "<-------------------- SERVICE SELECTION -------------------->"
@@ -365,8 +382,11 @@ function select_docker_containers(){
 		fi
 		if [[ $service_number == '5' ]]; then
 			add_jackett
+			add_flaresolver
+			sudo ufw allow 8191/tcp comment "FlareSolver"
 			sudo ufw allow 9117/tcp comment  "Jackett"
 			selected_services[JACKETT]=http://$ip_addr_trimmed:9117
+			selected_services[FLARESOLVER]=http://$ip_addr_trimmed:8191
 		fi
 		if [[ $service_number == '6' ]]; then
 			add_transmission
