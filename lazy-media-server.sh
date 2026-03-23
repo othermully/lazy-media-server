@@ -1,319 +1,558 @@
 #!/bin/bash
 
-# TODO: Add a active interface check, grab the IP of that interface, populate host IP
-# TODO: Input validation
-# TODO: Error handling
-# TODO: Move docker compose creation into its own function
-# TODO: Fix the manual path creation logic so it sets abs_downloads properly
-# TODO: Adjust overly permissive chmod in permission_setup() function
-# TODO: UID and GUID should be constatns at top of file
-# TODO: Main logic should only take place at bottom of file, all functions at top
+set -euo pipefail
+clear
+cat motd
 
-set -euo pipefail # Prevent silent failures i think?
+# Globals
+kernel_version=$(uname -r)
+distro=$(lsb_release -i | cut -f2)
+network_interface=""
+ip_addr=""
+ip_addr_trimmed=""
+hostname=${HOSTNAME}
 
-# Manual folder creation doesn't set abs_downloads
-# Manual input with spaces will sometimes fail
-# Very aggressive permission stance
-# hardcoded UID:GUID lol
-# Package checking will break if package name is different
+pkgman=""
+package_install_command=""
 
-abs_download_complete_path=""
-abs_download_incomplete_path=""
-abs_movie_path=""
-abs_tv_path=""
-abs_media_path=""
-root_media_path=""
-abs_downloads=""
+ufw_installed=""
+docker_installed=""
 
-function read_line() {
+# Clear existing docker compose file
+> docker-compose.yaml
+
+declare -A selected_services=()
+
+# Directory structure (Can remove most of these, most of them are just to keep track of the paths):
+# Torrents
+abs_dir_root="/data"
+abs_dir_torrents="/data/torrents"
+abs_dir_torrents_incomplete="/data/torrents/incomplete"
+abs_dir_torrent_books="/data/torrents/books"
+abs_dir_torrent_movies="/data/torrents/movies"
+abs_dir_torrent_tv="/data/torrents/tv"
+
+# Media
+abs_dir_media="/data/media"
+abs_dir_media_books="/data/media/books"
+abs_dir_media_movies="/data/media/movies"
+abs_dir_media_tv="/data/media/tv"
+abs_dir_media_music="/data/media/music"
+
+# Usenet
+abs_dir_usenet="/data/usenet"
+abs_dir_usenet_incomplete="/data/usenet/incomplete"
+abs_dir_usenet_complete="/data/usenet/complete"
+abs_dir_usenet_books="/data/usenet/complete/books"
+abs_dir_usenet_movies="/data/usenet/complete/movies"
+abs_dir_usenet_music="/data/usenet/complete/music"
+abs_dir_usenet_tv="/data/usenet/complete/tv"
+
+
+# Functions:
+function read_line(){
 	read -p "> " "$1"
 }
 
-function permission_setup(){
-	echo "-- Setting up permission on $@"
-	sudo chown -R 1000:1000 "$@"
-	sudo chmod -R a=,a+rX,u+w,g+w "$@"
-	echo "-- Permission set."
+function get_system_info(){
+	echo ""
+	echo "<-------------------- SYSTEM INFORMATION -------------------->"
+	echo "-- Distro:		$distro"
+	echo "-- Hostname:		$hostname"
+	echo "-- Package Manager:	$pkgman"
+	echo "-- UFW Installed:	$ufw_installed"
+	echo "-- Docker Installed:	$docker_installed"
+	echo "-- Kernel version:	$kernel_version"
+	echo "-- Network interface:	$network_interface"
+	echo "-- Local IPv4:		$ip_addr"
+	echo ""
 }
 
-function create_folders(){
-	echo "-- Creating folder structure..."
-	mkdir -p /data/media/downloads
-	mkdir -p /data/media/downloads/complete
-	mkdir -p /data/media/downloads/incomplete
-	mkdir -p /data/media/movies
-	mkdir -p /data/media/tv
-	echo "-- All folders created under: /data/media"
+function select_network_interface(){
+	echo ""
+	echo "<-------------------- GET NET STUFF -------------------->"
+	ip a | grep "UP"
+	echo "Type the name of your active network interface (e.g. eth1)"
+	echo ""
+	read_line input 
 
-	root_media_path="/data"
-	abs_downloads="/data/media/downloads"
-	abs_download_complete_path="/data/media/downloads/complete"
-	abs_download_incomplete_path="/data/media/downloads/incomplete"
-	abs_movie_path="/data/media/movies"
-	abs_tv_path="/data/media/tv"
-
-	return 0
+	network_interface=${input}
+	ip_addr=$(ip addr show "$network_interface" | awk '/inet / {print $2}')
+	ip_addr_trimmed=${ip_addr%%/*}
 }
 
-function check_if_folder_exists(){
-	# Check if the folder exists, if not, create it.
-	if [[ -d "$1" ]]; then
-		echo "-- "$1" exists. Nothing left to do."
+function get_package_manager(){
+	if command -v apt > /dev/null 2>&1; then
+		pkgman="apt"
+		package_install_command="apt install"
+	elif command -v dnf > /dev/null 2>&1; then
+		pkgman="dnf"
+		package_install_command="dnf install"
+	elif command -v yum > /dev/null 2>&1; then
+		pkgman="yum"
+		package_install_command="yum -S"
+	elif command -v pacman > /dev/null 2>&1; then
+		pkgman="pacman"
+		package_install_command="pacman -S"
+	fi
+}
+function check_if_ufw_installed(){
+	if command -v ufw > /dev/null 2>&1; then
+		ufw_installed="true"
 	else
-		echo "-- $1 does not exists. Creating it..."
-		mkdir -p "$1"
-		echo "-- $1 created."
+		ufw_installed="false"
 	fi
 }
 
-function setup_docker_apt_repo(){
-	# Add Docker's official GPG key:
-	sudo apt update
-	sudo apt install ca-certificates curl
-	sudo install -m 0755 -d /etc/apt/keyrings
-	sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-	sudo chmod a+r /etc/apt/keyrings/docker.asc
+function check_if_docker_installed(){
+	if command -v docker > /dev/null 2>&1; then
+		docker_installed="true"
+	else
+		docker_installed="false"
+	fi
 
-	# Add the repository to Apt sources:
-	sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
-	Types: deb
-	URIs: https://download.docker.com/linux/ubuntu
-	Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
-	Components: stable
-	Signed-By: /etc/apt/keyrings/docker.asc
+}
+
+function add_lidarr(){
+	sudo mkdir -p /docker/appdata/config/lidarr
+	cat >> docker-compose.yaml << EOF
+   lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Halifax
+    volumes:
+      - /docker/appdata/config/lidarr:/config
+      - $abs_dir_root:/data #optional
+    ports:
+      - 8686:8686
+    restart: unless-stopped
 EOF
 
-	echo "-- Docker GPG key and APT sources added."
-	sudo apt update
+}
 
+function add_bazarr(){
+	sudo mkdir -p /docker/appdata/config/bazarr
+	cat >> docker-compose.yaml << EOF
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Halifax
+    volumes:
+      - /docker/appdata/config/bazarr:/config
+      - $abs_dir_root:/data #optional
+    ports:
+      - 6767:6767
+    restart: unless-stopped
+EOF
+}
+
+function add_sabnzbd(){
+	sudo mkdir -p /docker/appdata/config/sabnzbd
+	cat >> docker-compose.yaml << EOF
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    container_name: sabnzbd
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Halifax
+    volumes:
+      - /docker/appdata/config/sabnzbd:/config
+      - $abs_dir_usenet:/data/usenet #optional
+    ports:
+      - 8080:8080
+    restart: unless-stopped
+EOF
+
+}
+
+function add_radarr(){
+	sudo mkdir -p /docker/appdata/config/radarr
+	cat >> docker-compose.yaml << EOF
+  radarr:
+    container_name: radarr
+    hostname: radarr.internal
+    image: ghcr.io/hotio/radarr:latest
+    restart: unless-stopped
+    logging:
+      driver: json-file
+    ports:
+      - 7878:7878
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Halifax
+    volumes:
+      - /docker/appdata/config/radarr:/config
+      - $abs_dir_root:/data
+EOF
+}
+
+function add_sonarr(){
+	sudo mkdir -p /docker/appdata/config/sonarr
+	cat >> docker-compose.yaml << EOF
+  sonarr:
+    container_name: sonarr
+    hostname: sonarr.internal
+    image: ghcr.io/hotio/sonarr:latest
+    restart: unless-stopped
+    logging:
+      driver: json-file
+    ports:
+      - 8989:8989
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Halifax
+    volumes:
+      - /docker/appdata/config/sonarr:/config
+      - $abs_dir_root:/data
+EOF
+
+}
+
+function add_jackett(){
+	sudo mkdir -p /docker/appdata/config/jackett
+	cat >> docker-compose.yaml << EOF
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Halifax
+      - AUTO_UPDATE=true #optional
+      - RUN_OPTS= #optional
+    volumes:
+      - /docker/appdata/config/jackett:/config
+      - $abs_dir_torrents:/data/torrents
+    ports:
+      - 9117:9117
+    restart: unless-stopped
+EOF
+}
+
+function add_transmission(){
+	sudo mkdir -p /docker/appdata/config/transmission/
+	cat >> docker-compose.yaml << EOF
+  transmission:
+    image: lscr.io/linuxserver/transmission:latest
+    container_name: transmission
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Halifax
+      - TRANSMISSION_WEB_HOME= #optional
+      - USER= #optional
+      - PASS= #optional
+      - WHITELIST= #optional
+      - PEERPORT= #optional
+      - HOST_WHITELIST= #optional
+    volumes:
+      - /docker/appdata/config/transmission:/config
+      - $abs_dir_torrents:/data/torrents #optional
+    ports:
+      - 9091:9091
+      - 51413:51413
+      - 51413:51413/udp
+    restart: unless-stopped
+EOF
+
+}
+
+function add_qbittorrent(){
+	sudo mkdir -p /docker/appdata/config/qbittorrent
+	cat >> docker-compose.yaml << EOF
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Halifax
+      - WEBUI_PORT=8081
+      - TORRENTING_PORT=6881
+    volumes:
+      - /docker/appdata/config/qbittorrent:/config
+      - $abs_dir_torrents:/data/torrents #optional
+    ports:
+      - 8081:8081
+      - 6881:6881
+      - 6881:6881/udp
+    restart: unless-stopped
+EOF
+}
+
+function add_plex(){
+	sudo mkdir -p /docker/appdata/config/plex
+	cat >> docker-compose.yaml << EOF
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    network_mode: host
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Halifax
+      - VERSION=docker
+      - PLEX_CLAIM= #optional
+    volumes:
+      - /docker/appdata/config/plex:/config
+      - $abs_dir_media_tv:/tv
+      - $abs_dir_media_movies:/movies
+    restart: unless-stopped
+EOF
+}
+
+function add_seer(){
+	sudo mkdir -p /docker/appdata/config/seer
+	cat >> docker-compose.yaml << EOF
+  seerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    init: true
+    container_name: seerr
+    environment:
+      - LOG_LEVEL=debug
+      - TZ=America/Halifax
+    ports:
+      - 5055:5055
+    volumes:
+      - /docker/appdata/config/seer:/app/config
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:5055/api/v1/status || exit 1
+      start_period: 20s
+      timeout: 3s
+      interval: 15s
+      retries: 3
+    restart: unless-stopped
+EOF
+}
+
+function select_docker_containers(){
+	echo ""
+	echo "<-------------------- SERVICE SELECTION -------------------->"
+	echo "Please select which services you want installed, separated by spaces (e.g. 1 3 4)"
+	echo "1. Sonarr	2. Radarr	3. Plex"
+	echo "4. Jellyfin	5. Jackett	6. Transmission"
+	echo "7. qBittorrent	8. SABnzbd	9. Bazarr"
+	echo "10. Lidarr	11: Prowlarr	12. Seer"
+	read_line input
+
+	for service_number in $input; do
+		if [[ $service_number == '1' ]]; then
+			add_sonarr
+			sudo ufw allow 8989/tcp comment "Sonarr"
+			selected_services[SONARR]=http://$ip_addr_trimmed:8989
+		fi
+		if [[ $service_number == '2' ]]; then
+			add_radarr
+			sudo ufw allow 7878/tcp comment "Radarr"
+			selected_services[RADARR]=http://$ip_addr_trimmed:7878
+		fi
+		if [[ $service_number == '3' ]]; then
+			add_plex
+			sudo ufw allow 32400/tcp comment "Plex web"
+			selected_services[PLEX]=http://$ip_addr_trimmed:32400/web
+		fi
+		if [[ $service_number == '4' ]]; then
+			echo "Jellyfin, not added yet."
+		fi
+		if [[ $service_number == '5' ]]; then
+			add_jackett
+			sudo ufw allow 9117/tcp comment  "Jackett"
+			selected_services[JACKETT]=http://$ip_addr_trimmed:9117
+		fi
+		if [[ $service_number == '6' ]]; then
+			add_transmission
+			sudo ufw allow 9091/tcp comment "Transmission"
+			sudo ufw allow 51413 comment "Transmission"
+			selected_services[TRANSMISSION]=http://$ip_addr_trimmed:9091
+		fi
+		if [[ $service_number == '7' ]]; then
+			add_qbittorrent
+			sudo ufw allow 8081 comment "qBittorrent"
+			sudo ufw allow 6881 comment "qBittorrent"
+			selected_services[qBITTORRENT]=http://$ip_addr_trimmed:8081
+		fi
+		if [[ $service_number == '8' ]]; then
+			add_sabnzbd
+			sudo ufw allow 8080 comment "SABnzbd"
+			selected_services[SABNZBD]=http://$ip_addr_trimmed:8080
+		fi
+		if [[ $service_number == '9' ]]; then
+			add_bazarr
+			sudo ufw allow 6767 comment "Bazarr"
+			selected_services[BAZARR]=http://$ip_addr_trimmed:6767
+		fi
+		if [[ $service_number == '10' ]]; then
+			add_lidarr
+			sudo ufw allow 8686 comment "Lidarr"
+			selected_services[LIDARR]=http://$ip_addr_trimmed:8686
+		fi
+		if [[ $service_number == '11' ]]; then
+			echo "Prowlarr, not added yet"
+		fi
+		if [[ $service_number == '12' ]]; then
+			add_seer
+			sudo ufw allow 5055 comment "Seer"
+			selected_services[SEER]=http://$ip_addr_trimmed:5055
+		fi
+	done
+
+}
+
+function create_automatic_paths(){
+	echo ""
+	echo "Simple or complex(preferred) structure? (S/C)"
+	read_line input
+	if [[ $input == 'S' ]]; then
+		sudo mkdir -p /data/torrents/incomplete
+		sudo mkdir -p /data/torrents/complete
+		sudo mkdir -p /data/media/movies
+		sudo mkdir -p /data/media/tv
+		abs_dir_usenet="/dev/null"
+
+	elif [[ $input == 'C' ]]; then
+		sudo mkdir -p /data/{usenet/{incomplete,complete}/{tv,movies,music},media/{tv,movies,music}}
+		sudo mkdir -p /data/{torrents/{tv,movies,music},media/{tv,movies,music}}
+	else
+		echo "-- Invalid option."
+	fi
+
+	echo ""
+	echo "<-------------------- CURRENT DIRECTORY STRUCTURE -------------------->"
+	echo "-- Root dir: $abs_dir_root"
+	echo "-- Torrent folder: $abs_dir_torrents"
+	ls -la $abs_dir_torrents
+	echo ""
+	echo "-- Media folder: $abs_dir_media"
+	ls -la $abs_dir_media
+	echo ""
+	echo "-- Usenet folder: $abs_dir_usenet"
+	ls -la $abs_dir_usenet
+	echo ""
+	echo "<--------------------------------------------------------------------->" 
+}
+
+function setup_permissions(){
+	sudo chown -R 1000:1000 $abs_dir_root
+	sudo chmod -R a=,a+rX,u+w,g+w $abs_dir_root
+	echo "-- Completed permission setup."
 }
 
 function install_docker(){
-	echo "-- Starting docker installation."
 
-	REQUIRED_PKG="docker-ce"
-	PKG_OK=$(dpkg-query -W --showformat='${Status}\n' $REQUIRED_PKG|grep "install ok installed")
-	echo Checking for $REQUIRED_PKG: $PKG_OK
-	if [ "" = "$PKG_OK" ]; then
-	  echo "No $REQUIRED_PKG. Setting up $REQUIRED_PKG."
-	  
-	  sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+	if [[ $distro == *"Debian"* ]] || [[ $distro == *"Ubuntu"* ]]; then
+		echo "-- Installing Docker for Debian/Ubuntu..."
+
+		sudo apt update
+		sudo apt install -y ca-certificates curl gnupg
+
+		sudo install -m 0755 -d /etc/apt/keyrings
+
+		curl -fsSL https://download.docker.com/linux/$([[ $distro == *"Ubuntu"* ]] && echo ubuntu || echo debian)/gpg \
+			| sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+		sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+		echo \
+		"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+		https://download.docker.com/linux/$([[ $distro == *"Ubuntu"* ]] && echo ubuntu || echo debian) \
+		$(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+		| sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+		sudo apt update
+
+		sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 	fi
 
-	echo "Docker + docker components have been installed."
-}
-
-clear
-cat motd
-echo "Do you want this script to automatically create the folder structure for you? (Y/N)"
-read_line create_folder_bool
-
-if [[ "$create_folder_bool" != "N" ]]; then
-	create_folders
-else
-
-	echo "Root media path (e.g /data)"
-	read_line root_media_path
-	check_if_folder_exists $root_media_path
-
-	echo "Absolute path of the completed download folder (e.g /data/media/downloads/complete)"
-	read_line abs_download_complete_path
-	check_if_folder_exists $abs_download_complete_path
-
-	echo "Absolute path of the incomplete download folder (e.g. /data/media/downloads/incomplete)"
-	read_line abs_download_incomplete_path
-	check_if_folder_exists $abs_download_incomplete_path
-
-	echo "Will you be downloading both movies and tv? (Y/N)"
-	read_line movies_and_tv_bool
-
-	if [[ "$movies_and_tv_bool" == "Y" ]]; then
-		echo "Enter the absolute path of the movies directory: (e.g. /data/media/movies)"
-		read_line abs_movie_path
-		check_if_folder_exists $abs_movie_path
-
-		echo "Enter the absolute path of the tv directory: (e.g. /data/media/tv)"
-		read_line abs_tv_path
-		check_if_folder_exists $abs_tv_path
-
-	else
-		echo "Enter your main media directory path: (e.g. /data/media/)"
-		read_line abs_media_path
-		check_if_folder_exists $abs_media_path
-	fi
-fi
-
-permission_setup "$root_media_path"
-
-echo ""
-echo "---------- Your current directory structure ----------"
-echo "Complete downloads	   -> $abs_download_complete_path"
-echo "Incomplete downloads	   -> $abs_download_incomplete_path"
-
-if [[ -z $abs_media_path ]]; then
-	echo "Movies directory	   -> $abs_movie_path"
-	echo "TV directory		   -> $abs_tv_path"
-else
-	echo "Main media directory -> $abs_media_path"
-fi
-echo "------------------------------------------------------"
-
-# Check if user wants to create the ufw rules
-function create_ufw_rules(){
-	echo "Do you want to create the UFW rules for all services? (Y/N)"
-	read_line create_ufw_bool 
-	if [[ "$create_ufw_bool" == "Y" ]]; then
-		sudo ufw allow 7878/tcp comment "Radarr"
-		sudo ufw allow 8989/tcp comment "Sonarr"
-		sudo ufw allow 32400/tcp comment "Plex web"
-		sudo ufw allow 9091/tcp comment "Transmission"
-		sudo ufw allow 51413 comment "Transmission" 
-		sudo ufw allow 9117/tcp comment "Jackett"
-
-		echo "-- All firewall rules created."
-		sudo ufw status
-	else
-		echo "-- No firewall rules created, please complete that once the containers are live."
+	if [[ $distro == "Arch" ]]; then
+		$package_install_command docker
 	fi
 
+	docker_installed="true"
 }
 
-create_ufw_rules()
-
-# Start docker install here
-echo "-- Creating docker config directories."
-mkdir -p /docker/appdata/config/radarr
-mkdir -p /docker/appdata/config/sonarr
-mkdir -p /docker/appdata/config/plex
-mkdir -p /docker/appdata/config/jackett
-mkdir -p /docker/appdata/config/transmission
-
-permission_setup /docker
-echo "-- /docker/appdata/config/{all service directories} created."
-echo "-- permissions setup on /docker."
-echo ""
-
-function create_docker_compose() {
-	echo "Creating docker-compose.yaml..."
-	cat > docker-compose.yaml << EOF
-	version: "3.2"
-	services:
-	  radarr:
-	    container_name: radarr
-	    hostname: radarr.internal
-	    image: ghcr.io/hotio/radarr:latest
-	    restart: unless-stopped
-	    logging:
-	      driver: json-file
-	    ports:
-	      - 7878:7878
-	    environment:
-	      - PUID=1000
-	      - PGID=1000
-	      - TZ=America/Halifax
-	    volumes:
-	      - /docker/appdata/config/radarr:/config
-	      - $root_media_path:/data
-	  sonarr:
-	    container_name: sonarr
-	    hostname: sonarr.internal
-	    image: ghcr.io/hotio/sonarr:latest
-	    restart: unless-stopped
-	    logging:
-	      driver: json-file
-	    ports:
-	      - 8989:8989
-	    environment:
-	      - PUID=1000
-	      - PGID=1000
-	      - TZ=America/Halifax
-	    volumes:
-	      - /docker/appdata/config/sonarr:/config
-	      - $root_media_path:/data
-	  plex:
-	    image: lscr.io/linuxserver/plex:latest
-	    container_name: plex
-	    network_mode: host
-	    environment:
-	      - PUID=1000
-	      - PGID=1000
-	      - TZ=America/Halifax
-	      - VERSION=docker
-	      - PLEX_CLAIM= #optional
-	    volumes:
-	      - /docker/appdata/config/plex:/config
-	      - $abs_tv_path:/tv
-	      - $abs_movie_path:/movies
-	    restart: unless-stopped
-	  transmission:
-	    image: lscr.io/linuxserver/transmission:latest
-	    container_name: transmission
-	    environment:
-	      - PUID=1000
-	      - PGID=1000
-	      - TZ=America/Halifax
-	      - TRANSMISSION_WEB_HOME= #optional
-	      - USER= #optional
-	      - PASS= #optional
-	      - WHITELIST= #optional
-	      - PEERPORT= #optional
-	      - HOST_WHITELIST= #optional
-	    volumes:
-	      - /docker/appdata/config/transmission:/config
-	      - $abs_download_complete_path:/downloads/complete #optional
-	      - $abs_download_incomplete_path:/downloads/incomplete#optional
-	    ports:
-	      - 9091:9091
-	      - 51413:51413
-	      - 51413:51413/udp
-	    restart: unless-stopped
-	  jackett:
-	    image: lscr.io/linuxserver/jackett:latest
-	    container_name: jackett
-	    environment:
-	      - PUID=1000
-	      - PGID=1000
-	      - TZ=America/Halifax
-	      - AUTO_UPDATE=true #optional
-	      - RUN_OPTS= #optional
-	    volumes:
-	      - /docker/appdata/config/jackett:/config
-	      - $abs_downloads:/downloads
-	    ports:
-	      - 9117:9117
-	    restart: unless-stopped
-EOF
-}
-
-function start_containers(){
-	echo "-- Building containers..."
+function build_containers(){
 	sudo docker compose -f docker-compose.yaml up -d
-	sudo docker ps -a 
+	sudo docker ps -a
+	echo "-- Containers built."
 }
 
-echo ""
-echo "docker-compose.yaml created!"
-echo "Starting docker installation."
 
-setup_docker_apt_repo
-install_docker
-create_docker_compose
+function main(){
+	# Getting system information
+	get_package_manager
+	select_network_interface
+	check_if_ufw_installed
+	check_if_docker_installed
+	get_system_info
 
+	# Handle package installs
+	if [[ $ufw_installed == 'false' ]]; then
+		echo "UFW is not installed, would you like to install it? (Y/N)"
+		read_line input
+		if [[ $input == 'Y' ]]; then
+			$package_install_command 'ufw'
+			sudo ufw enable
+			echo "-- UFW Installed."
+		fi
+	else
+		echo "-- UFW Installed, skipping installation."
+	fi
 
+	if [[ $docker_installed == 'false' ]]; then
+		echo "Docker is not installed, would you like to install it? (Y/N)"
+		read_line input
+		if [[ $input == 'Y' ]]; then
+			install_docker
+		fi
+	else
+		echo "-- Docker installed, skipping installation."
+	fi
 
-echo ""
-start_containers
-echo ""
-echo "Process completed."
-echo ""
-echo "------------------------- WEB INTERFACES -------------------------------"
-echo "Plex:		http://{host-ip}:32400"
-echo "Sonarr:		http://{host-ip}:8989"
-echo "Radarr:		http://{host-ip}:7878"
-echo "Jackett:		http://{host-ip}:9117"
-echo "Transmission:	http://{host-ip}:9091"
-echo "-------------------------------------------------------------------------"
+	echo ""
+	echo "Do you want this script to automatically create the folder structure? (Y/N)"
+	read_line input
+	if [[ $input == 'Y' ]]; then
+		create_automatic_paths
+	else
+		echo "I didn't finish this part, create automatic paths instead"
+	fi
 
+	echo ""
+	echo "-- Setting up folder permissions..."
+	setup_permissions
 
+	cat >> docker-compose.yaml <<EOF
+---
+services:
+EOF
+	select_docker_containers
+	echo ""
+	if [[ $docker_installed == 'false' ]]; then
+		echo ""
+		echo "-- Docker not installed. Skipping container build."
+		echo ""
+	else
+		build_containers
+	fi
+
+	# List web interfaces
+	echo "<-------------------- WEB INTERFACES -------------------->"
+	for value in "${!selected_services[@]}";
+	do 
+		echo "${value}:${selected_services[$value]}"
+	done
+	echo "<-------------------------------------------------------->"
+}
+
+main
 
 
