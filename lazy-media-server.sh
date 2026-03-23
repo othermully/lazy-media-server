@@ -116,7 +116,7 @@ function check_if_docker_installed(){
 function add_lidarr(){
 	sudo mkdir -p /docker/appdata/config/lidarr
 	cat >> docker-compose.yaml << EOF
-   lidarr:
+  lidarr:
     image: lscr.io/linuxserver/lidarr:latest
     container_name: lidarr
     environment:
