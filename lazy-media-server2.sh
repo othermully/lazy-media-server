@@ -17,6 +17,8 @@ package_install_command=""
 
 ufw_installed=""
 docker_installed=""
+
+# Clear existing docker compose file
 > docker-compose.yaml
 
 declare -A selected_services=()
@@ -474,7 +476,7 @@ function install_docker(){
 		$package_install_command docker
 	fi
 
-	$docker_installed="true"
+	docker_installed="true"
 }
 
 function build_containers(){
