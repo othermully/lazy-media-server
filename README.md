@@ -6,13 +6,13 @@ This project is a work in progress and is not intended for production use.
 
 ## Overview
 
-`lazy-media-server` streamlines the installation and configuration of a typical media server stack using Docker-based services. It is designed for quick setup in controlled environments with minimal manual configuration.
+`lazy-media-server` streamlines the installation and volume configuration of a typical media server stack using Docker-based services. It is designed for quick setup in controlled environments. App configuration required once installed.
 
 Volume paths and general structure are inspired by: https://trash-guides.info/
 
 ## Included Services
 
-The script installs and configures the following services:
+The script can install the following services:
 
 ### Media Servers
 - **Plex**  
@@ -48,8 +48,10 @@ The script installs and configures the following services:
 ## Requirements
 
 - Linux-based system
-- Docker and Docker Compose installed
+- Docker and Docker Compose installed (This can be done via the script as well)
+- Uncomplicted firewall (UFW) installed (This can also be done via the script)
 - Basic familiarity with shell scripts and containerized environments
+- All app configuration must be handled by the user (Visit https://trash-guides.info for configuration info)
 
 ## Usage
 
