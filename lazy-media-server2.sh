@@ -160,7 +160,7 @@ function add_sabnzbd(){
       - TZ=America/Halifax
     volumes:
       - /docker/appdata/config/sabnzbd:/config
-      - $abs_dir_usenet:/data/usenet t#optional
+      - $abs_dir_usenet:/data/usenet #optional
     ports:
       - 8080:8080
     restart: unless-stopped
@@ -443,53 +443,36 @@ function setup_permissions(){
 }
 
 function install_docker(){
-	if [[ $distro == 'Arch' ]]; then
-		# Arch package handles GPG keys and sources list
-		$package_install_name 'docker'
+
+	if [[ $distro == *"Debian"* ]] || [[ $distro == *"Ubuntu"* ]]; then
+		echo "-- Installing Docker for Debian/Ubuntu..."
+
+		sudo apt update
+		sudo apt install -y ca-certificates curl gnupg
+
+		sudo install -m 0755 -d /etc/apt/keyrings
+
+		curl -fsSL https://download.docker.com/linux/$([[ $distro == *"Ubuntu"* ]] && echo ubuntu || echo debian)/gpg \
+			| sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+		sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+		echo \
+		"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+		https://download.docker.com/linux/$([[ $distro == *"Ubuntu"* ]] && echo ubuntu || echo debian) \
+		$(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+		| sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+		sudo apt update
+
+		sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 	fi
 
-	if [[ $distro == 'Debian' ]]; then
-		# Add Docker's official GPG key:
-		sudo apt update
-		sudo apt install ca-certificates curl
-		sudo install -m 0755 -d /etc/apt/keyrings
-		sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-		sudo chmod a+r /etc/apt/keyrings/docker.asc
-
-		# Add the repository to Apt sources:
-		sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
-		Types: deb
-		URIs: https://download.docker.com/linux/debian
-		Suites: $(. /etc/os-release && echo "$VERSION_CODENAME")
-		Components: stable
-		Signed-By: /etc/apt/keyrings/docker.asc
-EOF
-		sudo apt-get update
-		sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-	fi
-
-	if [[ $distro == 'Ubuntu' ]]; then
-		# Add Docker's official GPG key:
-		sudo apt update
-		sudo apt install ca-certificates curl
-		sudo install -m 0755 -d /etc/apt/keyrings
-		sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-		sudo chmod a+r /etc/apt/keyrings/docker.asc
-
-		# Add the repository to Apt sources:
-		sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
-		Types: deb
-		URIs: https://download.docker.com/linux/ubuntu
-		Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
-		Components: stable
-		Signed-By: /etc/apt/keyrings/docker.asc
-EOF
-		sudo apt-get update
-		sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+	if [[ $distro == "Arch" ]]; then
+		$package_install_command docker
 	fi
 }
 
-#
 function build_containers(){
 	sudo docker compose -f docker-compose.yaml up -d
 	sudo docker ps -a
